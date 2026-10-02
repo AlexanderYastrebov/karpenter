@@ -17,7 +17,8 @@ limitations under the License.
 package kwok
 
 const (
-	kwokProviderPrefix = "kwok://"
+	// Nodes look like EC2 instances, so tools that infer the cloud provider from the provider ID see AWS.
+	kwokProviderPrefix = "aws:///"
 )
 
 var kwokPartitions = []string{"a"}

@@ -32,6 +32,9 @@ rules:
   - apiGroups: ["karpenter.kwok.sh"]
     resources: ["kwoknodeclasses"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["karpenter.k8s.aws"]
+    resources: ["ec2nodeclasses"]
+    verbs: ["get", "list", "watch"]
   # Write
   - apiGroups: ["karpenter.kwok.sh"]
     resources: ["kwoknodeclasses", "kwoknodeclasses/status"]

@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"maps"
 	"math/rand"
+	"regexp"
 	"strings"
 	"time"
 
@@ -37,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"sigs.k8s.io/karpenter/kwok/apis/ec2v1"
 	"sigs.k8s.io/karpenter/kwok/apis/v1alpha1"
 	kwokutils "sigs.k8s.io/karpenter/kwok/utils"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -72,10 +74,14 @@ func (c CloudProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1
 	if status := nodeClass.StatusConditions().Get(status.ConditionReady); status.IsFalse() {
 		return nil, cloudprovider.NewNodeClassNotReadyError(stderrors.New(status.Message))
 	}
+	var registrationDelay time.Duration
+	if kwokNodeClass, ok := nodeClass.(*v1alpha1.KWOKNodeClass); ok {
+		registrationDelay = kwokNodeClass.Spec.NodeRegistrationDelay.Duration
+	}
 	// Kick-off a goroutine to allow us to asynchronously register nodes
 	// We're fine to leak this because failed registration can also happen in real providers
 	go func() {
-		time.Sleep(nodeClass.Spec.NodeRegistrationDelay.Duration)
+		time.Sleep(registrationDelay)
 		if err := retry.OnError(retry.DefaultBackoff, func(err error) bool { return true }, func() error {
 			return c.kubeClient.Create(ctx, node)
 		}); err != nil {
@@ -86,8 +92,11 @@ func (c CloudProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1
 	return c.toNodeClaim(node)
 }
 
-func (c CloudProvider) resolveNodeClassFromNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1alpha1.KWOKNodeClass, error) {
-	nodeClass := &v1alpha1.KWOKNodeClass{}
+func (c CloudProvider) resolveNodeClassFromNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (status.Object, error) {
+	var nodeClass status.Object = &v1alpha1.KWOKNodeClass{}
+	if nodeClaim.Spec.NodeClassRef.Group == ec2v1.Group {
+		nodeClass = &ec2v1.EC2NodeClass{}
+	}
 	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); err != nil {
 		return nil, err
 	}
@@ -105,7 +114,8 @@ func (c CloudProvider) Delete(ctx context.Context, nodeClaim *v1.NodeClaim) erro
 }
 
 func (c CloudProvider) Get(ctx context.Context, providerID string) (*v1.NodeClaim, error) {
-	nodeName := strings.ReplaceAll(providerID, kwokProviderPrefix, "")
+	// The provider ID has the form aws:///<zone>/<node name>.
+	nodeName := providerID[strings.LastIndex(providerID, "/")+1:]
 	node := &corev1.Node{}
 	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodeName}, node); err != nil {
 		if errors.IsNotFound(err) {
@@ -159,7 +169,7 @@ func (c CloudProvider) Name() string {
 }
 
 func (c CloudProvider) GetSupportedNodeClasses() []status.Object {
-	return []status.Object{&v1alpha1.KWOKNodeClass{}}
+	return []status.Object{&v1alpha1.KWOKNodeClass{}, &ec2v1.EC2NodeClass{}}
 }
 
 // KWOKUnhealthyCondition is a node condition the KWOK reference provider uses to SIMULATE an unhealthy node for
@@ -243,14 +253,15 @@ func (c CloudProvider) toNode(nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
 		}
 	}
 
+	labels := addInstanceLabels(nodeClaim.Labels, instanceType, nodeClaim, cheapestOffering)
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        newName,
-			Labels:      addInstanceLabels(nodeClaim.Labels, instanceType, nodeClaim, cheapestOffering),
+			Labels:      labels,
 			Annotations: addKwokAnnotation(nodeClaim.Annotations),
 		},
 		Spec: corev1.NodeSpec{
-			ProviderID: kwokProviderPrefix + newName,
+			ProviderID: kwokProviderPrefix + labels[corev1.LabelTopologyZone] + "/" + newName,
 			Taints:     []corev1.Taint{v1.UnregisteredNoExecuteTaint},
 		},
 		Status: corev1.NodeStatus{
@@ -263,6 +274,8 @@ func (c CloudProvider) toNode(nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
 		},
 	}, nil
 }
+
+var awsZoneRegexp = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]+[a-z]$`)
 
 func addInstanceLabels(labels map[string]string, instanceType *cloudprovider.InstanceType, nodeClaim *v1.NodeClaim, offering *cloudprovider.Offering) map[string]string {
 	ret := make(map[string]string, len(labels))
@@ -295,6 +308,10 @@ func addInstanceLabels(labels map[string]string, instanceType *cloudprovider.Ins
 
 	ret[v1alpha1.KwokPartitionLabelKey] = lo.Sample(kwokPartitions)
 	ret[corev1.LabelHostname] = nodeClaim.Name
+	// For AWS zones (e.g. us-west-2a) the region is the zone without its trailing letter.
+	if zone := ret[corev1.LabelTopologyZone]; awsZoneRegexp.MatchString(zone) {
+		ret[corev1.LabelTopologyRegion] = zone[:len(zone)-1]
+	}
 
 	ret[v1alpha1.KwokLabelKey] = v1alpha1.KwokLabelValue
 	return ret

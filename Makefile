@@ -44,6 +44,16 @@ apply-with-kind: verify build-with-kind ## Deploy the kwok controller from the c
 		--set-string controller.env[0].name=ENABLE_PROFILING \
 		--set-string controller.env[0].value=true
 
+apply-with-kind-aws: build-with-kind ## Deploy the kwok controller faking EKS: aws:/// provider IDs, EC2NodeClass support and real AWS instance types
+	kubectl apply -f kwok/charts/crds
+	helm upgrade --install karpenter kwok/charts --namespace $(KARPENTER_NAMESPACE) --skip-crds \
+		$(HELM_OPTS) \
+		--set controller.image.repository=$(IMG_REPOSITORY) \
+		--set controller.image.tag=$(IMG_TAG) \
+		--set serviceMonitor.enabled=false \
+		--set-string controller.env[0].name=INSTANCE_TYPES_FILE_PATH \
+		--set-string controller.env[0].value=/var/run/ko/aws_instance_types.json
+
 apply-with-kind-dra: verify build-with-kind ## Deploy the kwok controller for DRA testing
 	kubectl apply -f kwok/charts/crds
 	helm upgrade --install karpenter kwok/charts --namespace $(KARPENTER_NAMESPACE) --skip-crds \
