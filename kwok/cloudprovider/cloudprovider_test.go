@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package kwok
 
 import (
@@ -48,6 +47,10 @@ func TestNodeLooksLikeEC2Instance(t *testing.T) {
 			Requirements: []v1.NodeSelectorRequirementWithMinValues{
 				{Key: corev1.LabelInstanceTypeStable, Operator: corev1.NodeSelectorOpIn, Values: []string{"m5.large"}},
 				{Key: corev1.LabelTopologyZone, Operator: corev1.NodeSelectorOpIn, Values: []string{"us-west-2b"}},
+				{Key: corev1.LabelOSStable, Operator: corev1.NodeSelectorOpIn, Values: []string{"linux"}},
+				{Key: corev1.LabelArchStable, Operator: corev1.NodeSelectorOpIn, Values: []string{"amd64"}},
+				{Key: v1.NodePoolLabelKey, Operator: corev1.NodeSelectorOpIn, Values: []string{"default"}},
+				{Key: "karpenter.k8s.aws/ec2nodeclass", Operator: corev1.NodeSelectorOpIn, Values: []string{"default"}},
 			},
 		},
 	}
@@ -63,6 +66,9 @@ func TestNodeLooksLikeEC2Instance(t *testing.T) {
 		corev1.LabelInstanceTypeStable: "m5.large",
 		corev1.LabelTopologyZone:       "us-west-2b",
 		corev1.LabelTopologyRegion:     "us-west-2",
+		// The file lists m5.large for windows before linux, and with the EC2 name x86_64.
+		corev1.LabelOSStable:   "linux",
+		corev1.LabelArchStable: "amd64",
 	} {
 		if got := node.Labels[key]; got != want {
 			t.Errorf("label %s = %q, want %q", key, got, want)

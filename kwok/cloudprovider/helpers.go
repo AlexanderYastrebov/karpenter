@@ -122,6 +122,12 @@ func parseFamilyFromType(instanceType string) string {
 	return familySplit[0]
 }
 
+// ec2Architectures maps EC2 architecture names to Kubernetes ones.
+var ec2Architectures = map[string]string{
+	"x86_64": "amd64",
+	"i386":   "386",
+}
+
 func setDefaultOptions(opts InstanceTypeOptions) InstanceTypeOptions {
 	var cpu, memory string
 	for res, q := range opts.Resources {
@@ -138,6 +144,11 @@ func setDefaultOptions(opts InstanceTypeOptions) InstanceTypeOptions {
 		v1alpha1.InstanceFamilyLabelKey: parseFamilyFromType(opts.Name),
 		v1alpha1.InstanceCPULabelKey:    cpu,
 		v1alpha1.InstanceMemoryLabelKey: memory,
+	}
+
+	// Instance types files generated from AWS use EC2 architecture names.
+	if arch, ok := ec2Architectures[opts.Architecture]; ok {
+		opts.Architecture = arch
 	}
 
 	// if the user specified a different pod limit, override the default

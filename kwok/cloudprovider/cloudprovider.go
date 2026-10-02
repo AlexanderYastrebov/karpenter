@@ -212,9 +212,11 @@ func (c CloudProvider) RepairPolicies() []cloudprovider.RepairPolicy {
 	}
 }
 
-func (c CloudProvider) getInstanceType(instanceTypeName string) (*cloudprovider.InstanceType, error) {
+// getInstanceType returns the instance type with the given name that is compatible with the requirements.
+// Instance types files may list a name more than once, e.g. separate linux and windows entries.
+func (c CloudProvider) getInstanceType(instanceTypeName string, requirements scheduling.Requirements) (*cloudprovider.InstanceType, error) {
 	it, found := lo.Find(c.instanceTypes, func(it *cloudprovider.InstanceType) bool {
-		return it.Name == instanceTypeName
+		return it.Name == instanceTypeName && it.Requirements.Intersects(requirements) == nil
 	})
 	if !found {
 		return nil, serrors.Wrap(fmt.Errorf("unable to find instance type"), "instance-type", instanceTypeName)
@@ -238,7 +240,7 @@ func (c CloudProvider) toNode(nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
 	var cheapestOffering *cloudprovider.Offering
 	// Loop through instance type values, as the node claim will only have the In operator.
 	for _, val := range req.Values {
-		it, err := c.getInstanceType(val)
+		it, err := c.getInstanceType(val, requirements)
 		if err != nil {
 			return nil, serrors.Wrap(fmt.Errorf("instance type not found"), "instance-type", val)
 		}
